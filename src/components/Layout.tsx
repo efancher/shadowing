@@ -24,6 +24,10 @@ export function Layout() {
           <span aria-hidden="true">⚙</span>
           Storage
         </NavLink>
+        <NavLink to="/help">
+          <span aria-hidden="true">?</span>
+          Help
+        </NavLink>
       </nav>
     </div>
   );

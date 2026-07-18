@@ -573,7 +573,7 @@ audio {
   left: 0;
   display: grid;
   padding: 0.45rem 1rem max(0.45rem, env(safe-area-inset-bottom));
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   border-top: 1px solid rgb(23 53 47 / 14%);
   background: rgb(255 253 248 / 94%);
   backdrop-filter: blur(18px);
@@ -627,7 +627,7 @@ audio {
     right: 1.25rem;
     bottom: 1.25rem;
     left: auto;
-    width: 15rem;
+    width: 22rem;
     padding: 0.4rem;
     border: 1px solid rgb(23 53 47 / 14%);
     border-radius: 1rem;
@@ -788,5 +788,150 @@ audio {
 @media (min-width: 42rem) {
   .nudge-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.help-page {
+  scroll-behavior: smooth;
+}
+
+.help-toc,
+.help-section {
+  margin-bottom: 1rem;
+  padding: 1.15rem;
+  scroll-margin-top: 5.5rem;
+}
+
+.help-toc nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.help-toc a {
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.65rem;
+  color: var(--forest);
+  background: var(--sage);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.help-section h3 {
+  margin: 1.4rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.help-section p,
+.help-section li,
+.help-section dd {
+  line-height: 1.65;
+}
+
+.help-section code,
+.help-example {
+  padding: 0.15rem 0.35rem;
+  border-radius: 0.35rem;
+  background: #f3f2ec;
+}
+
+.help-example {
+  padding: 0.8rem;
+  font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.help-steps {
+  display: grid;
+  padding: 0;
+  gap: 0.75rem;
+  list-style: none;
+  counter-reset: help-step;
+}
+
+.help-steps li {
+  display: grid;
+  position: relative;
+  min-height: 3.25rem;
+  padding-left: 3.4rem;
+  align-content: center;
+  counter-increment: help-step;
+}
+
+.help-steps li::before {
+  content: counter(help-step);
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  width: 2.6rem;
+  height: 2.6rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--forest);
+  background: var(--gold-light);
+  font-weight: 800;
+}
+
+.help-steps span {
+  color: var(--muted);
+}
+
+.help-definitions {
+  display: grid;
+  margin: 0;
+  gap: 0.6rem;
+}
+
+.help-definitions div {
+  padding: 0.8rem;
+  border-radius: 0.7rem;
+  background: #f3f2ec;
+}
+
+.help-definitions dt {
+  color: var(--forest);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.help-definitions dd {
+  margin-top: 0.2rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.help-section details {
+  border-top: 1px solid var(--line);
+  padding: 0.85rem 0;
+}
+
+.help-section details:last-of-type {
+  border-bottom: 1px solid var(--line);
+}
+
+.help-section summary {
+  min-height: 2.75rem;
+  cursor: pointer;
+  color: var(--forest);
+  font-weight: 750;
+}
+
+.help-section details p {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+}
+
+@media (min-width: 42rem) {
+  .help-toc nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .help-section {
+    padding: 1.5rem;
   }
 }
