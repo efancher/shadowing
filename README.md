@@ -17,16 +17,19 @@ audio or attempt to download audio from YouTube.
 
 - Sources for YouTube videos, uploaded media, podcasts, and manual study sets
 - Japanese sentence, reading, translation, transcript status, tags, speaker, and timestamps
+- YouTube timestamp mining (playback only) and WebVTT/SRT subtitle import
+- Local media upload with waveform region clipping into short reference WAV clips
 - One local reference clip per sentence
-- Safari-compatible microphone recording with runtime MIME negotiation
-- Multiple learner attempts with notes and immediate replay
-- Reference-to-learner alternate playback
-- Metadata JSON export/import with explicit merge or replace behavior
+- Safari-compatible microphone recording with runtime MIME negotiation and optional calibration
+- Multiple learner attempts with notes, manual ratings, favorites, and immediate replay
+- Alternate playback, speed controls, chunk practice, and editable mora timing guides
+- Local waveform comparison, YIN pitch contours, and confidence-labeled timing observations
+- Library filters (search, type, reference presence, needs review)
+- Metadata JSON and full media ZIP export/import
 - Installable PWA shell and offline access to previously saved local data
 - Mobile-first controls, safe-area support, keyboard focus, reduced motion, and high contrast
 
-Pitch extraction, waveform overlays, YouTube embedding, subtitle import, and long-media clipping
-are intentionally deferred until the core iPhone practice loop is reliable.
+YouTube audio is never downloaded. Pitch/waveform analysis requires a local reference clip.
 
 ## Local development
 
@@ -146,15 +149,16 @@ and request consent before uploading audio.
 The core suite proves:
 
 - Timestamp validation and normalized source/sentence creation
-- IndexedDB persistence
+- IndexedDB persistence and schema v2 stores
 - Atomic attempt/audio ownership and deletion
 - Metadata round-trip, dangling-reference rejection, and collision handling
 - MediaRecorder MIME fallback selection
+- WebVTT/SRT parsing, YouTube ID extraction, mora seeding, and onset detection helpers
 
-Automated browser emulation cannot prove iPhone microphone hardware behavior. Before a release,
-manually verify on current iPhone and iPad Safari: permission denial/retry, AAC recording,
-background interruption, reference upload, alternate playback, reload persistence, Home Screen
-launch, and storage-pressure messaging.
+Automated browser emulation cannot prove iPhone microphone hardware behavior. Before relying on the
+deployed app, manually verify on current iPhone and iPad Safari: permission denial/retry, AAC
+recording, large-media clipping under memory pressure, YouTube mining, ZIP export/import, Home
+Screen launch, and storage-pressure messaging.
 
 ## Review order
 
@@ -165,13 +169,10 @@ launch, and storage-pressure messaging.
 5. [`src/pages/SettingsPage.tsx`](src/pages/SettingsPage.tsx) — storage and metadata backup
 6. [`src/services/services.test.ts`](src/services/services.test.ts) — persistence guarantees
 
-## Planned phases
+## Access
 
-1. Core library, learner recording, and local reference comparison (current)
-2. Long local-media clipping and waveform selection
-3. YouTube timestamp mining and WebVTT/SRT import
-4. Waveform comparison and alignment modes
-5. Lightweight YIN/MPM pitch extraction with voiced/unvoiced regions
-6. Confidence-labeled Japanese timing observations
-7. Shadowing, chunk practice, and richer manual history
-8. Full media archive restore, storage dashboard, and iOS PWA polish
+After GitHub Pages is enabled for this repository, the live app is:
+
+**https://efancher.github.io/shadowing/**
+
+Local development remains available with `npm run dev`.

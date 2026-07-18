@@ -663,3 +663,130 @@ audio {
     border-width: 2px;
   }
 }
+
+.filters-card {
+  margin-bottom: 1rem;
+}
+
+.filter-toggles {
+  display: grid;
+  gap: 0.75rem;
+  align-content: end;
+}
+
+.checkbox-row {
+  display: flex !important;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 650;
+}
+
+.checkbox-row input {
+  width: auto;
+  min-height: auto;
+}
+
+.youtube-host,
+.waveform-host {
+  width: 100%;
+  min-height: 12rem;
+  margin: 0.75rem 0 1rem;
+  overflow: hidden;
+  border-radius: 0.85rem;
+  background: #e7ece9;
+}
+
+.youtube-host iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.nudge-grid {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0.85rem 0;
+}
+
+.cue-list {
+  display: grid;
+  gap: 0.55rem;
+  margin: 1rem 0;
+  max-height: 20rem;
+  overflow: auto;
+}
+
+.cue-item {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  color: inherit;
+  background: white;
+  text-align: left;
+}
+
+.cue-item.selected {
+  border-color: var(--forest);
+  background: var(--sage);
+}
+
+.cue-item span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.clip-editor,
+.analysis-panel,
+.peak-waveform,
+.pitch-plot {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.peak-waveform,
+.pitch-plot {
+  color: var(--forest);
+  padding: 0.5rem;
+  border-radius: 0.75rem;
+  background: #f3f2ec;
+}
+
+.peak-waveform svg,
+.pitch-plot svg {
+  width: 100%;
+  height: auto;
+}
+
+.observation-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.mora-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.mora-chip {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 4.5rem;
+  padding: 0.45rem;
+  border-radius: 0.65rem;
+  background: #f3f2ec;
+  font-size: 0.75rem;
+}
+
+.mora-chip input {
+  min-height: 2.4rem;
+  padding: 0.35rem;
+}
+
+@media (min-width: 42rem) {
+  .nudge-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

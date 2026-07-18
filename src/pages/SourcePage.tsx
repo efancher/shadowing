@@ -1,23 +1,28 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ErrorNotice, EmptyState } from "../components/Layout";
+import { MediaClipEditor } from "../components/MediaClipEditor";
+import { YouTubeMiner } from "../components/YouTubeMiner";
 import { db } from "../db/schema";
-import { SentenceService } from "../services";
+import {
+  ClipExportService,
+  MediaImportService,
+  SentenceService,
+  SubtitleService,
+  formatClock,
+  mergeCueTexts
+} from "../services";
 import type { TranscriptStatus } from "../types";
 
 const sentenceService = new SentenceService();
+const mediaImport = new MediaImportService();
+const clipExport = new ClipExportService();
+const subtitleService = new SubtitleService();
 
 function optionalNumber(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
   return text ? Number(text) : undefined;
-}
-
-function formatTime(seconds?: number) {
-  if (seconds === undefined) return "—";
-  const minutes = Math.floor(seconds / 60);
-  const remainder = (seconds % 60).toFixed(2).padStart(5, "0");
-  return `${minutes}:${remainder}`;
 }
 
 export function SourcePage() {
@@ -25,13 +30,45 @@ export function SourcePage() {
   const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [minerJapanese, setMinerJapanese] = useState("");
+  const [minerReading, setMinerReading] = useState("");
+  const [minerEnglish, setMinerEnglish] = useState("");
+  const [selectedCueIds, setSelectedCueIds] = useState<string[]>([]);
+  const [mediaUrl, setMediaUrl] = useState<string>();
+  const [clipSentenceId, setClipSentenceId] = useState<string>();
+
   const data = useLiveQuery(async () => {
-    const [source, sentences] = await Promise.all([
+    const [source, sentences, media, tracks, cues] = await Promise.all([
       db.sources.get(sourceId),
-      db.sentences.where("sourceId").equals(sourceId).reverse().sortBy("createdAt")
+      db.sentences.where("sourceId").equals(sourceId).reverse().sortBy("createdAt"),
+      db.sourceMedia.where("sourceId").equals(sourceId).first(),
+      db.subtitleTracks.where("sourceId").equals(sourceId).toArray(),
+      db.subtitleCues.where("sourceId").equals(sourceId).sortBy("startMs")
     ]);
-    return { source, sentences };
+    return { source, sentences, media, track: tracks[0], cues };
   }, [sourceId]);
+
+  const selectedCues = useMemo(
+    () => data?.cues.filter((cue) => selectedCueIds.includes(cue.id)) ?? [],
+    [data?.cues, selectedCueIds]
+  );
+
+  useEffect(() => {
+    if (!data?.media) {
+      setMediaUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return undefined;
+      });
+      return;
+    }
+    const url = URL.createObjectURL(data.media.blob);
+    setMediaUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return url;
+    });
+    return () => URL.revokeObjectURL(url);
+  }, [data?.media]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,6 +92,102 @@ export function SourcePage() {
     }
   }
 
+  async function saveMinedSentence(startSeconds: number, endSeconds: number) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const sentence = await sentenceService.createSentence({
+        sourceId,
+        japanese: minerJapanese,
+        reading: minerReading,
+        english: minerEnglish,
+        startSeconds,
+        endSeconds,
+        transcriptStatus: "manually-corrected"
+      });
+      navigate(`/sentences/${sentence.id}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save mined sentence.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadMedia(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await mediaImport.attachSourceMedia(sourceId, file);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not import media.");
+    } finally {
+      setBusy(false);
+      event.target.value = "";
+    }
+  }
+
+  async function importSubtitles(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await subtitleService.importFile(sourceId, file);
+      setSelectedCueIds([]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not import subtitles.");
+    } finally {
+      setBusy(false);
+      event.target.value = "";
+    }
+  }
+
+  async function saveSelectedCues() {
+    if (selectedCues.length === 0) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const startSeconds = selectedCues[0].startMs / 1000;
+      const endSeconds = selectedCues[selectedCues.length - 1].endMs / 1000;
+      const sentence = await sentenceService.createSentence({
+        sourceId,
+        japanese: mergeCueTexts(selectedCues.map((cue) => ({ startMs: cue.startMs, endMs: cue.endMs, text: cue.text }))),
+        startSeconds,
+        endSeconds,
+        transcriptStatus: "machine-generated"
+      });
+      navigate(`/sentences/${sentence.id}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save subtitle sentence.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveClip(startSeconds: number, endSeconds: number) {
+    if (!data?.media || !clipSentenceId) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const discard = window.confirm("Discard the long original media after extracting this clip? (Recommended on iPhone.)");
+      await clipExport.saveClipAsReference({
+        sentenceId: clipSentenceId,
+        media: data.media,
+        startSeconds,
+        endSeconds,
+        originalFileName: data.media.originalFileName,
+        discardSourceMediaId: discard ? data.media.id : undefined
+      });
+      navigate(`/sentences/${clipSentenceId}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save clip.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!data) return <div className="page"><p className="muted">Loading source…</p></div>;
   if (!data.source) {
     return (
@@ -65,7 +198,8 @@ export function SourcePage() {
     );
   }
 
-  const { source, sentences } = data;
+  const { source, sentences, media, cues } = data;
+
   return (
     <div className="page">
       <Link className="back-link" to="/">‹ Library</Link>
@@ -84,10 +218,110 @@ export function SourcePage() {
           Open original source <span aria-hidden="true">↗</span>
         </a>
       )}
+      <ErrorNotice message={error} />
+
+      {source.externalId && (
+        <YouTubeMiner
+          videoId={source.externalId}
+          japanese={minerJapanese}
+          reading={minerReading}
+          english={minerEnglish}
+          onJapaneseChange={setMinerJapanese}
+          onReadingChange={setMinerReading}
+          onEnglishChange={setMinerEnglish}
+          onSave={saveMinedSentence}
+          busy={busy}
+        />
+      )}
+
+      <section className="card form-card">
+        <h2>Local media</h2>
+        <p className="muted">Upload audio/video you lawfully possess, then clip a short reference for analysis.</p>
+        <div className="button-row">
+          <label className="primary file-button">
+            Upload media
+            <input type="file" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.webm,.mp4,.mov" onChange={uploadMedia} disabled={busy} />
+          </label>
+          {media && (
+            <button className="danger-text" type="button" disabled={busy} onClick={() => void mediaImport.removeSourceMedia(sourceId)}>
+              Remove original media
+            </button>
+          )}
+        </div>
+        {media && mediaUrl && (
+          <>
+            <p className="muted">
+              {media.originalFileName ?? "Uploaded media"} · {(media.byteLength / (1024 * 1024)).toFixed(1)} MB ·{" "}
+              {formatClock(media.durationMs / 1000)}
+            </p>
+            <label>
+              Save clip to sentence
+              <select value={clipSentenceId ?? ""} onChange={(event) => setClipSentenceId(event.target.value || undefined)}>
+                <option value="">Select a sentence…</option>
+                {sentences.map((sentence) => (
+                  <option key={sentence.id} value={sentence.id}>
+                    {sentence.japanese}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {clipSentenceId ? (
+              <MediaClipEditor
+                url={mediaUrl}
+                mimeType={media.mimeType}
+                initialStart={sentences.find((sentence) => sentence.id === clipSentenceId)?.startSeconds}
+                initialEnd={sentences.find((sentence) => sentence.id === clipSentenceId)?.endSeconds}
+                onSave={saveClip}
+                busy={busy}
+              />
+            ) : (
+              <p className="muted">Create or select a sentence before extracting a clip.</p>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="card form-card">
+        <h2>Subtitle import</h2>
+        <p className="muted">Import WebVTT or SRT, select cues, then edit the resulting Japanese sentence.</p>
+        <label className="secondary file-button">
+          Import VTT/SRT
+          <input type="file" accept=".vtt,.srt,text/vtt,application/x-subrip" onChange={importSubtitles} disabled={busy} />
+        </label>
+        {cues.length > 0 && (
+          <>
+            <div className="cue-list">
+              {cues.map((cue) => {
+                const selected = selectedCueIds.includes(cue.id);
+                return (
+                  <button
+                    key={cue.id}
+                    type="button"
+                    className={selected ? "cue-item selected" : "cue-item"}
+                    onClick={() =>
+                      setSelectedCueIds((current) =>
+                        selected ? current.filter((id) => id !== cue.id) : [...current, cue.id].sort(
+                          (a, b) => (cues.find((item) => item.id === a)?.startMs ?? 0) - (cues.find((item) => item.id === b)?.startMs ?? 0)
+                        )
+                      )
+                    }
+                  >
+                    <span>{formatClock(cue.startMs / 1000)}–{formatClock(cue.endMs / 1000)}</span>
+                    <strong lang="ja">{cue.text}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            <button className="primary" type="button" disabled={selectedCues.length === 0 || busy} onClick={() => void saveSelectedCues()}>
+              Save selected cues as sentence
+            </button>
+          </>
+        )}
+      </section>
 
       {showForm && (
         <form className="card form-card" onSubmit={handleSubmit}>
-          <h2>Save a sentence</h2>
+          <h2>Save a sentence manually</h2>
           <label>
             Japanese sentence
             <textarea name="japanese" required rows={3} lang="ja" placeholder="今日はどこへ行くんですか。" />
@@ -129,7 +363,6 @@ export function SourcePage() {
             Tags <span className="optional">comma-separated</span>
             <input name="tags" placeholder="travel, question" />
           </label>
-          <ErrorNotice message={error} />
           <button className="primary" type="submit">Save sentence</button>
         </form>
       )}
@@ -152,7 +385,7 @@ export function SourcePage() {
                   {sentence.english && <p className="muted">{sentence.english}</p>}
                 </div>
                 <div className="sentence-meta">
-                  <span>{formatTime(sentence.startSeconds)}–{formatTime(sentence.endSeconds)}</span>
+                  <span>{formatClock(sentence.startSeconds ?? 0)}–{formatClock(sentence.endSeconds ?? 0)}</span>
                   {sentence.referenceAudioId && <span className="pill success">reference</span>}
                   <span className="chevron" aria-hidden="true">›</span>
                 </div>

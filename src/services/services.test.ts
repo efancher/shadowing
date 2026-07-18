@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ShadowingDatabase } from "../db/schema";
+import { parseMoraLabels, seedMoraUnits, confidenceFromSignal } from "../analysis/japanese";
+import { canonicalizeAudioBuffer, detectOnsetSeconds } from "../analysis/audio";
 import {
   AttemptService,
   RecordingService,
   SentenceService,
   TransferService,
+  parseSrt,
+  parseWebVtt,
+  extractYouTubeId,
   validateMetadataExport,
   validateTimestamps
 } from ".";
@@ -35,7 +40,7 @@ describe("sentence validation and persistence", () => {
     const source = await service.createSource({
       type: "youtube",
       title: "  A useful video  ",
-      url: " https://www.youtube.com/watch?v=example "
+      url: " https://www.youtube.com/watch?v=dQw4w9WgXcQ "
     });
     const sentence = await service.createSentence({
       sourceId: source.id,
@@ -46,6 +51,7 @@ describe("sentence validation and persistence", () => {
     });
 
     expect(source.title).toBe("A useful video");
+    expect(source.externalId).toBe("dQw4w9WgXcQ");
     expect(sentence.japanese).toBe("今日はどこへ行くんですか。");
     expect(sentence.tags).toEqual(["question"]);
     expect(await database.sentences.get(sentence.id)).toEqual(sentence);
@@ -121,5 +127,70 @@ describe("recording compatibility", () => {
     }
     vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
     expect(RecordingService.supportedMimeType()).toBe("audio/webm;codecs=opus");
+  });
+});
+
+describe("subtitles and youtube helpers", () => {
+  it("parses webvtt and srt cues", () => {
+    const vtt = `WEBVTT
+
+1
+00:00:01.000 --> 00:00:02.500
+こんにちは
+
+2
+00:00:02.500 --> 00:00:04.000
+世界`;
+    const srt = `1
+00:00:01,000 --> 00:00:02,500
+こんにちは
+
+2
+00:00:02,500 --> 00:00:04,000
+世界`;
+    expect(parseWebVtt(vtt)).toHaveLength(2);
+    expect(parseSrt(srt)[0]?.text).toBe("こんにちは");
+  });
+
+  it("extracts youtube ids from common url forms", () => {
+    expect(extractYouTubeId("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe("dQw4w9WgXcQ");
+    expect(extractYouTubeId("https://youtu.be/dQw4w9WgXcQ")).toBe("dQw4w9WgXcQ");
+    expect(extractYouTubeId("dQw4w9WgXcQ")).toBe("dQw4w9WgXcQ");
+  });
+});
+
+describe("japanese timing helpers", () => {
+  it("parses mora labels including small kana and seeds units", () => {
+    expect(parseMoraLabels("きょう")).toEqual(["きょ", "う"]);
+    expect(parseMoraLabels("がっこう")).toEqual(["が", "っ", "こ", "う"]);
+    const units = seedMoraUnits("しんぶん", 2);
+    expect(units).toHaveLength(4);
+    expect(units[0]?.startSeconds).toBeCloseTo(0);
+    expect(units.at(-1)?.endSeconds).toBeCloseTo(2);
+  });
+
+  it("keeps low confidence when reading is missing", () => {
+    expect(
+      confidenceFromSignal({
+        hasReading: false,
+        voicedRatio: 0.8,
+        origin: "heuristic"
+      })
+    ).toBe("low");
+  });
+});
+
+describe("audio analysis helpers", () => {
+  it("detects onset after leading silence", () => {
+    const samples = new Float32Array(2048);
+    for (let i = 1024; i < samples.length; i += 1) samples[i] = 0.4;
+    const buffer = {
+      length: samples.length,
+      numberOfChannels: 1,
+      sampleRate: 16_000,
+      getChannelData: () => samples
+    } as unknown as AudioBuffer;
+    const canonical = canonicalizeAudioBuffer(buffer, 16_000);
+    expect(detectOnsetSeconds(canonical.samples, canonical.sampleRate)).toBeGreaterThan(0.01);
   });
 });
