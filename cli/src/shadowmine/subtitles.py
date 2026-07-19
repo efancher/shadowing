@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from unicodedata import east_asian_width
 
 from shadowmine.models import Cue
 
@@ -9,6 +10,17 @@ TIMESTAMP_RE = re.compile(
     r"(?P<h>\d{1,2}):(?P<m>\d{2}):(?P<s>\d{2})[.,](?P<ms>\d{1,3})"
 )
 ARROW_RE = re.compile(r"\s-->\s")
+
+# Rolling-caption handling (YouTube auto captions repeat the previous line and
+# append new text in tiny overlapping cues).
+ROLLING_DETECT_MIN_CUES = 6
+ROLLING_DETECT_MIN_RATIO = 0.5
+ROLLING_MERGE_MAX_GAP_MS = 200
+ROLLING_FRAGMENT_MAX_MS = 1500
+ROLLING_MERGED_CUE_MAX_MS = 20_000
+LEGACY_ROLLING_MAX_GAP_MS = 500
+PARALLEL_MIN_OVERLAP_RATIO = 0.2
+SENTENCE_END_CHARS = "。｡．.！!？?…」』"
 
 
 def _timestamp_to_ms(value: str) -> int:
@@ -29,9 +41,23 @@ def _clean_text(text: str) -> str:
     return " ".join(cleaned.split()).strip()
 
 
-def parse_webvtt(content: str, *, is_auto: bool = False) -> list[Cue]:
+def _join_fragments(left: str, right: str) -> str:
+    """Join text pieces, omitting the space between CJK characters."""
+    if not left:
+        return right
+    if not right:
+        return left
+    if east_asian_width(left[-1]) in ("W", "F") or east_asian_width(right[0]) in ("W", "F"):
+        return left + right
+    return f"{left} {right}"
+
+
+RawCue = tuple[int, int, list[str]]
+
+
+def _parse_webvtt_raw(content: str) -> list[RawCue]:
     lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    cues: list[Cue] = []
+    raw: list[RawCue] = []
     i = 0
     while i < len(lines):
         line = lines[i].strip()
@@ -50,18 +76,88 @@ def parse_webvtt(content: str, *, is_auto: bool = False) -> list[Cue]:
             continue
         start_raw = parts[0].split()[0]
         end_raw = parts[1].split()[0]
-        text_lines: list[str] = []
-        while i < len(lines) and lines[i].strip():
-            text_lines.append(lines[i])
+        # Rolling captions use whitespace-only placeholder lines inside the
+        # payload, so only a truly empty line (or the next timing line)
+        # terminates the cue block.
+        payload: list[str] = []
+        while i < len(lines) and lines[i] != "" and "-->" not in lines[i]:
+            payload.append(_clean_text(lines[i]))
             i += 1
-        text = _clean_text("\n".join(text_lines))
+        raw.append((_timestamp_to_ms(start_raw), _timestamp_to_ms(end_raw), payload))
+    return raw
+
+
+def _detect_rolling(raw: list[RawCue]) -> bool:
+    """Detect YouTube-style rolling captions.
+
+    Each cue payload starts with the previous cue's text (or a blank
+    placeholder line) and appends at most one new line at the bottom.
+    """
+    if len(raw) < ROLLING_DETECT_MIN_CUES:
+        return False
+    matches = 0
+    for (_, _, prev_lines), (_, _, curr_lines) in zip(raw, raw[1:]):
+        if len(curr_lines) < 2:
+            continue
+        prev_last = next((line for line in reversed(prev_lines) if line), "")
+        if curr_lines[0] == "" or curr_lines[0] == prev_last:
+            matches += 1
+    return matches / (len(raw) - 1) >= ROLLING_DETECT_MIN_RATIO
+
+
+def _extract_rolling(raw: list[RawCue]) -> list[Cue]:
+    """Convert rolling cues to one cue per new caption line.
+
+    Mid-sentence fragments (short cues without sentence-final punctuation)
+    are conservatively merged into the following cue.
+    """
+    events: list[tuple[int, int, str]] = []
+    for start, end, payload in raw:
+        new_text = payload[-1] if payload else ""
+        if not new_text:
+            continue
+        events.append((start, end, new_text))
+
+    merged: list[tuple[int, int, str]] = []
+    for start, end, text in events:
+        if merged:
+            prev_start, prev_end, prev_text = merged[-1]
+            gap_ms = start - prev_end
+            prev_duration_ms = prev_end - prev_start
+            merged_duration_ms = end - prev_start
+            is_open_fragment = prev_text[-1] not in SENTENCE_END_CHARS
+            if (
+                is_open_fragment
+                and gap_ms <= ROLLING_MERGE_MAX_GAP_MS
+                and prev_duration_ms <= ROLLING_FRAGMENT_MAX_MS
+                and merged_duration_ms <= ROLLING_MERGED_CUE_MAX_MS
+            ):
+                merged[-1] = (prev_start, end, _join_fragments(prev_text, text))
+                continue
+        merged.append((start, end, text))
+
+    return [
+        Cue(index=index, startMs=start, endMs=end, text=text, isAuto=True)
+        for index, (start, end, text) in enumerate(merged)
+    ]
+
+
+def parse_webvtt(content: str, *, is_auto: bool = False) -> list[Cue]:
+    raw = _parse_webvtt_raw(content)
+    if _detect_rolling(raw):
+        return _extract_rolling(raw)
+    cues: list[Cue] = []
+    for start, end, payload in raw:
+        text = ""
+        for line in payload:
+            text = _join_fragments(text, line)
         if not text:
             continue
         cues.append(
             Cue(
                 index=len(cues),
-                startMs=_timestamp_to_ms(start_raw),
-                endMs=_timestamp_to_ms(end_raw),
+                startMs=start,
+                endMs=end,
                 text=text,
                 isAuto=is_auto,
             )
@@ -100,8 +196,10 @@ def parse_srt(content: str, *, is_auto: bool = False) -> list[Cue]:
 def parse_subtitle_file(path: Path) -> list[Cue]:
     content = path.read_text(encoding="utf-8", errors="replace")
     name = path.name.lower()
-    is_auto = "auto" in name or ".ja.vtt" in name and "orig" not in name
-    # yt-dlp auto files often look like id.ja.vtt vs id.ja-orig.vtt; treat non-orig as auto when both exist.
+    # Filename hints are unreliable (YouTube auto tracks can be named
+    # "<id>.ja-orig.vtt"); parse_webvtt also promotes cues to auto when it
+    # detects the rolling-caption structure in the content itself.
+    is_auto = "auto" in name
     if name.endswith(".srt"):
         return parse_srt(content, is_auto=is_auto)
     return parse_webvtt(content, is_auto=is_auto)
@@ -129,7 +227,11 @@ def dedupe_rolling_captions(cues: list[Cue]) -> list[Cue]:
             result[-1] = cue.model_copy(update={"startMs": previous.startMs, "index": previous.index})
             continue
         # Previous was a prefix fragment that ended when next full line arrived
-        if prev_text and curr_text.startswith(prev_text[: max(1, len(prev_text) // 2)]) and cue.startMs <= previous.endMs + 500:
+        if (
+            prev_text
+            and curr_text.startswith(prev_text[: max(1, len(prev_text) // 2)])
+            and cue.startMs <= previous.endMs + LEGACY_ROLLING_MAX_GAP_MS
+        ):
             # Prefer longer stable line
             if len(curr_text) >= len(prev_text):
                 result[-1] = cue.model_copy(update={"startMs": min(previous.startMs, cue.startMs), "index": previous.index})
@@ -139,18 +241,76 @@ def dedupe_rolling_captions(cues: list[Cue]) -> list[Cue]:
     return [cue.model_copy(update={"index": index}) for index, cue in enumerate(result)]
 
 
-def load_project_cues(project_dir: Path) -> list[Cue]:
+def _files_for_language(subtitle_dir: Path, language: str) -> list[Path]:
+    suffixes = (
+        f".{language}.vtt",
+        f".{language}-orig.vtt",
+        f".{language}.srt",
+        f".{language}-orig.srt",
+    )
+    return sorted(
+        path
+        for path in subtitle_dir.iterdir()
+        if path.is_file() and path.name.lower().endswith(suffixes)
+    )
+
+
+def load_project_cues(project_dir: Path, language: str = "ja") -> list[Cue]:
     subtitle_dir = project_dir / "subtitles"
     if not subtitle_dir.exists():
         return []
-    files = sorted(subtitle_dir.glob("*.vtt")) + sorted(subtitle_dir.glob("*.srt"))
+    files = _files_for_language(subtitle_dir, language)
     if not files:
         return []
     # Prefer non-auto / orig tracks when present
     preferred = [path for path in files if "orig" in path.name.lower() or "manual" in path.name.lower()]
     chosen = preferred[0] if preferred else files[0]
     cues = parse_subtitle_file(chosen)
-    if chosen.name.lower().find("orig") == -1:
-        cues = [cue.model_copy(update={"isAuto": True}) for cue in cues]
+    if any(cue.isAuto for cue in cues):
+        # Rolling extraction already yields clean cues; this prefix dedup only
+        # collapses legacy growing-text tracks and is a no-op otherwise.
         cues = dedupe_rolling_captions(cues)
     return cues
+
+
+def align_parallel_text(
+    primary_cues: list[Cue],
+    parallel_cues: list[Cue],
+) -> dict[int, str]:
+    """Assign each translated cue to its nearest overlapping primary cue."""
+    matches_by_primary: dict[int, list[str]] = {}
+    for parallel in parallel_cues:
+        parallel_duration = max(1, parallel.endMs - parallel.startMs)
+        parallel_midpoint = (parallel.startMs + parallel.endMs) / 2
+        candidates: list[tuple[float, int]] = []
+        for primary in primary_cues:
+            overlap_ms = min(primary.endMs, parallel.endMs) - max(
+                primary.startMs,
+                parallel.startMs,
+            )
+            if overlap_ms <= 0:
+                continue
+            overlap_ratio = overlap_ms / parallel_duration
+            if overlap_ratio < PARALLEL_MIN_OVERLAP_RATIO:
+                continue
+            primary_midpoint = (primary.startMs + primary.endMs) / 2
+            candidates.append((abs(primary_midpoint - parallel_midpoint), primary.index))
+        if not candidates:
+            continue
+        _, primary_index = min(candidates)
+        matches = matches_by_primary.setdefault(primary_index, [])
+        if parallel.text not in matches:
+            matches.append(parallel.text)
+    return {
+        primary_index: " ".join(matches)
+        for primary_index, matches in matches_by_primary.items()
+    }
+
+
+def load_parallel_text(
+    project_dir: Path,
+    primary_cues: list[Cue],
+    language: str = "en",
+) -> dict[int, str]:
+    parallel_cues = load_project_cues(project_dir, language=language)
+    return align_parallel_text(primary_cues, parallel_cues)

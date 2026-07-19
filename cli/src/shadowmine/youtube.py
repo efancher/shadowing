@@ -100,7 +100,9 @@ def fetch_audio(url: str, projects_root: Path) -> Path:
 
 def download_subtitles(url: str, project_dir: Path, langs: list[str] | None = None) -> list[Path]:
     ensure_project_dirs(project_dir)
-    languages = langs or ["ja", "ja-orig"]
+    # Fetch Japanese for mining and English for an optional timestamp-aligned
+    # gloss. Missing tracks are allowed; yt-dlp writes whichever are available.
+    languages = langs or ["ja", "ja-orig", "en", "en-orig"]
     opts = {
         "skip_download": True,
         "writesubtitles": True,

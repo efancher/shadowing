@@ -27,6 +27,7 @@ dist-ssr
 *.sw?
 
 # Python
+.venv/
 cli/.venv/
 cli/**/__pycache__/
 cli/**/*.egg-info/

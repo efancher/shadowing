@@ -11,8 +11,14 @@ from shadowmine import __version__
 from shadowmine.clip import add_clip, compute_boundaries
 from shadowmine.deps import check_dependencies, require_dependencies
 from shadowmine.export_pkg import export_project, validate_package
-from shadowmine.mine import run_mine_loop
-from shadowmine.project import ensure_project_dirs, load_source, resolve_project_dir, save_source
+from shadowmine.mine import mine_all_cues, run_mine_loop
+from shadowmine.project import (
+    ensure_project_dirs,
+    load_sentences,
+    load_source,
+    resolve_project_dir,
+    save_source,
+)
 from shadowmine.subtitles import load_project_cues
 from shadowmine.youtube import download_subtitles, fetch_audio, info_to_source, inspect_url
 
@@ -59,6 +65,67 @@ def inspect_cmd(url: str = typer.Argument(..., help="YouTube URL or video id")) 
     console.print(table)
 
 
+@app.command("create")
+def create_cmd(
+    url: str = typer.Argument(..., help="YouTube URL or video id"),
+    projects: Optional[Path] = typer.Option(None, "--projects", help="Projects root directory"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output .shadowing.zip path"),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Mine every cleaned Japanese cue without prompting",
+    ),
+) -> None:
+    """Run the normal fetch → subtitles → mine → export workflow."""
+    require_dependencies(console)
+    projects_root = projects or _default_projects()
+
+    console.print("[bold][1/5][/bold] Fetching source audio…")
+    project_dir = fetch_audio(url, projects_root)
+    source = load_source(project_dir)
+    console.print(f"[green]Fetched[/green] {source.title}")
+    console.print(f"Project: {project_dir}")
+
+    console.print("\n[bold][2/5][/bold] Downloading Japanese subtitles…")
+    download_subtitles(source.url, project_dir)
+    cues = load_project_cues(project_dir)
+    if not cues:
+        console.print("[red]No Japanese subtitle cues were found; no package was created.[/red]")
+        raise typer.Exit(code=1)
+    auto_count = sum(1 for cue in cues if cue.isAuto)
+    cue_detail = f"; {auto_count} auto-generated" if auto_count else ""
+    console.print(f"Loaded {len(cues)} subtitle cues{cue_detail}.")
+
+    if yes:
+        console.print("\n[bold][3/5][/bold] Mining all subtitle cues…")
+        mine_all_cues(project_dir, console)
+    else:
+        console.print("\n[bold][3/5][/bold] Review cues and select sentences…")
+        mine_code = run_mine_loop(project_dir, console)
+        if mine_code != 0:
+            raise typer.Exit(code=mine_code)
+    sentences = load_sentences(project_dir)
+    if not sentences:
+        console.print("[yellow]No sentences were saved; no package was created.[/yellow]")
+        raise typer.Exit(code=1)
+
+    console.print("\n[bold][4/5][/bold] Exporting package…")
+    package_path = export_project(project_dir, output)
+    console.print(f"[green]Exported[/green] {package_path}")
+
+    console.print("\n[bold][5/5][/bold] Validating package…")
+    document = validate_package(package_path)
+    console.print(
+        f"[green]Valid[/green] {document['source']['title']} · "
+        f"{len(document['sentences'])} sentences"
+    )
+    console.print(
+        "\n[bold green]Done.[/bold green] Transfer the .shadowing.zip file to your "
+        "practice device and choose Import package in the web app."
+    )
+
+
 @app.command("fetch")
 def fetch_cmd(
     url: str = typer.Argument(..., help="YouTube URL or video id"),
@@ -98,10 +165,23 @@ def subtitles_cmd(
 
 
 @app.command("mine")
-def mine_cmd(project: Path = typer.Argument(..., help="Project directory")) -> None:
-    """Interactive line-oriented cue browser that clips selected lines."""
+def mine_cmd(
+    project: Path = typer.Argument(..., help="Project directory"),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Mine every cleaned Japanese cue without prompting",
+    ),
+) -> None:
+    """Mine subtitle cues interactively, or use -y to accept all."""
     require_dependencies(console)
     project_dir = resolve_project_dir(project)
+    if yes:
+        mine_all_cues(project_dir, console)
+        if not load_sentences(project_dir):
+            raise typer.Exit(code=1)
+        return
     code = run_mine_loop(project_dir, console)
     raise typer.Exit(code=code)
 

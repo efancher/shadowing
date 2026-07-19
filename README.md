@@ -47,17 +47,21 @@ pip install -e ".[dev]"
 shadowmine --help
 ```
 
-Typical flow:
+Recommended guided flow:
 
 ```bash
-shadowmine inspect "https://www.youtube.com/watch?v=…"
-shadowmine fetch "https://www.youtube.com/watch?v=…"
-shadowmine subtitles projects/<videoId>
-shadowmine mine projects/<videoId>
-shadowmine clip --project projects/<videoId> --start 83.42 --end 85.81 --japanese "今日はどこへ行くんですか。"
-shadowmine export projects/<videoId>
-shadowmine validate path/to/package.shadowing.zip
+shadowmine create "https://www.youtube.com/watch?v=…"
+
+# Or accept every cleaned subtitle cue without prompts:
+shadowmine create "https://www.youtube.com/watch?v=…" -y
 ```
+
+This fetches audio and subtitles, opens the interactive sentence miner, then
+exports and validates the `.shadowing.zip` package. The individual `inspect`,
+`fetch`, `subtitles`, `mine`, `clip`, `export`, and `validate` commands remain
+available for step-by-step use. English subtitles are fetched and aligned by
+timestamp when available. See the [CLI guide](cli/README.md) for the full
+workflow and web import instructions.
 
 **Legal / ToS:** You are responsible for lawful download and use of any media. This tool does not bypass DRM, login walls, or age restrictions.
 

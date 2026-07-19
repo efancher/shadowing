@@ -53,7 +53,9 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    needs: [build, cli]
+    # Pages should ship when the web build succeeds. CLI tests remain a
+    # separate required check and must not block the practice app deploy.
+    needs: [build]
     runs-on: ubuntu-latest
     steps:
       - name: Deploy

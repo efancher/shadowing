@@ -78,9 +78,9 @@ def build_package_document(project_dir: Path) -> tuple[dict, dict[str, Path]]:
             version=PACKAGE_VERSION,  # type: ignore[arg-type]
             createdAt=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             generator={"name": GENERATOR_NAME, "version": __version__},
-        ).model_dump(mode="json"),
-        "source": package_source.model_dump(mode="json"),
-        "sentences": [item.model_dump(mode="json") for item in package_sentences],
+        ).model_dump(mode="json", exclude_none=True),
+        "source": package_source.model_dump(mode="json", exclude_none=True),
+        "sentences": [item.model_dump(mode="json", exclude_none=True) for item in package_sentences],
     }
     if subtitle_path:
         document["subtitlePath"] = subtitle_path
