@@ -6,9 +6,18 @@ from typer.testing import CliRunner
 
 import shadowmine.app as app_module
 from shadowmine.models import Cue, ProjectSource
+from shadowmine.youtube import FetchResult, SubtitleResult
 
 
 runner = CliRunner()
+
+
+def _fetch_result(project_dir: Path, *, reused: bool = False) -> FetchResult:
+    return FetchResult(project_dir=project_dir, reused=reused)
+
+
+def _subtitle_result(*, reused: bool = False) -> SubtitleResult:
+    return SubtitleResult(paths=[], reused=reused)
 
 
 def test_create_runs_guided_workflow(monkeypatch, tmp_path: Path) -> None:
@@ -26,13 +35,13 @@ def test_create_runs_guided_workflow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         app_module,
         "fetch_audio",
-        lambda url, projects: calls.append("fetch") or project_dir,
+        lambda url, projects, **kwargs: calls.append("fetch") or _fetch_result(project_dir),
     )
     monkeypatch.setattr(app_module, "load_source", lambda project: source)
     monkeypatch.setattr(
         app_module,
         "download_subtitles",
-        lambda url, project: calls.append("subtitles"),
+        lambda url, project, **kwargs: calls.append("subtitles") or _subtitle_result(),
     )
     monkeypatch.setattr(
         app_module,
@@ -86,9 +95,17 @@ def test_create_does_not_export_when_nothing_was_saved(monkeypatch, tmp_path: Pa
     )
 
     monkeypatch.setattr(app_module, "require_dependencies", lambda console: None)
-    monkeypatch.setattr(app_module, "fetch_audio", lambda url, projects: project_dir)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_audio",
+        lambda url, projects, **kwargs: _fetch_result(project_dir),
+    )
     monkeypatch.setattr(app_module, "load_source", lambda project: source)
-    monkeypatch.setattr(app_module, "download_subtitles", lambda url, project: None)
+    monkeypatch.setattr(
+        app_module,
+        "download_subtitles",
+        lambda url, project, **kwargs: _subtitle_result(),
+    )
     monkeypatch.setattr(
         app_module,
         "load_project_cues",
@@ -118,9 +135,17 @@ def test_create_yes_mines_every_cue_without_interactive_loop(
     calls: list[str] = []
 
     monkeypatch.setattr(app_module, "require_dependencies", lambda console: None)
-    monkeypatch.setattr(app_module, "fetch_audio", lambda url, projects: project_dir)
+    monkeypatch.setattr(
+        app_module,
+        "fetch_audio",
+        lambda url, projects, **kwargs: _fetch_result(project_dir),
+    )
     monkeypatch.setattr(app_module, "load_source", lambda project: source)
-    monkeypatch.setattr(app_module, "download_subtitles", lambda url, project: None)
+    monkeypatch.setattr(
+        app_module,
+        "download_subtitles",
+        lambda url, project, **kwargs: _subtitle_result(),
+    )
     monkeypatch.setattr(
         app_module,
         "load_project_cues",
@@ -156,3 +181,51 @@ def test_create_yes_mines_every_cue_without_interactive_loop(
     assert result.exit_code == 0, result.output
     assert calls == ["mine-all", "export", "validate"]
     assert "Mining all subtitle cues" in result.output
+
+
+def test_create_passes_refresh_to_fetch_and_subtitles(monkeypatch, tmp_path: Path) -> None:
+    project_dir = tmp_path / "projects" / "video123456"
+    package_path = project_dir / "video123456.shadowing.zip"
+    source = ProjectSource(
+        id="source-video123456",
+        url="https://www.youtube.com/watch?v=video123456",
+        videoId="video123456",
+        title="Fixture video",
+    )
+    seen: dict[str, bool] = {}
+
+    monkeypatch.setattr(app_module, "require_dependencies", lambda console: None)
+
+    def fake_fetch(url: str, projects: Path, *, refresh: bool = False) -> FetchResult:
+        seen["fetch_refresh"] = refresh
+        return _fetch_result(project_dir, reused=False)
+
+    def fake_subs(url: str, project: Path, *, refresh: bool = False) -> SubtitleResult:
+        seen["subs_refresh"] = refresh
+        return _subtitle_result(reused=False)
+
+    monkeypatch.setattr(app_module, "fetch_audio", fake_fetch)
+    monkeypatch.setattr(app_module, "load_source", lambda project: source)
+    monkeypatch.setattr(app_module, "download_subtitles", fake_subs)
+    monkeypatch.setattr(
+        app_module,
+        "load_project_cues",
+        lambda project: [Cue(index=0, startMs=1000, endMs=2000, text="こんにちは")],
+    )
+    monkeypatch.setattr(
+        app_module,
+        "mine_all_cues",
+        lambda project, console, **kwargs: 1,
+    )
+    monkeypatch.setattr(app_module, "load_sentences", lambda project: [object()])
+    monkeypatch.setattr(app_module, "export_project", lambda project, output: package_path)
+    monkeypatch.setattr(
+        app_module,
+        "validate_package",
+        lambda package: {"source": {"title": "Fixture video"}, "sentences": [{}]},
+    )
+
+    result = runner.invoke(app_module.app, ["create", source.url, "-y", "--refresh"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == {"fetch_refresh": True, "subs_refresh": True}

@@ -83,26 +83,38 @@ def create_cmd(
         "--kana/--no-kana",
         help="Generate hiragana readings for kanji (default on)",
     ),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Re-download source audio and subtitles even when a local cache exists",
+    ),
 ) -> None:
     """Run the normal fetch → subtitles → mine → export workflow."""
     require_dependencies(console)
     projects_root = projects or _default_projects()
 
     console.print("[bold][1/5][/bold] Fetching source audio…")
-    project_dir = fetch_audio(url, projects_root)
+    fetch = fetch_audio(url, projects_root, refresh=refresh)
+    project_dir = fetch.project_dir
     source = load_source(project_dir)
-    console.print(f"[green]Fetched[/green] {source.title}")
+    if fetch.reused:
+        console.print(f"[green]Using cached audio[/green] {source.title}")
+    else:
+        console.print(f"[green]Fetched[/green] {source.title}")
     console.print(f"Project: {project_dir}")
 
     console.print("\n[bold][2/5][/bold] Downloading Japanese subtitles…")
-    download_subtitles(source.url, project_dir)
+    subtitle_result = download_subtitles(source.url, project_dir, refresh=refresh)
     cues = load_project_cues(project_dir)
     if not cues:
         console.print("[red]No Japanese subtitle cues were found; no package was created.[/red]")
         raise typer.Exit(code=1)
     auto_count = sum(1 for cue in cues if cue.isAuto)
     cue_detail = f"; {auto_count} auto-generated" if auto_count else ""
-    console.print(f"Loaded {len(cues)} subtitle cues{cue_detail}.")
+    if subtitle_result.reused:
+        console.print(f"Using cached subtitles ({len(cues)} cues{cue_detail}).")
+    else:
+        console.print(f"Loaded {len(cues)} subtitle cues{cue_detail}.")
 
     if yes:
         console.print("\n[bold][3/5][/bold] Mining all subtitle cues…")
@@ -137,19 +149,32 @@ def create_cmd(
 def fetch_cmd(
     url: str = typer.Argument(..., help="YouTube URL or video id"),
     projects: Optional[Path] = typer.Option(None, "--projects", help="Projects root directory"),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Re-download audio even when a local cache exists",
+    ),
 ) -> None:
     """Download best audio into projects/<videoId>/."""
     require_dependencies(console)
-    project_dir = fetch_audio(url, projects or _default_projects())
-    source = load_source(project_dir)
-    console.print(f"[green]Fetched[/green] {source.title}")
-    console.print(f"Project: {project_dir}")
+    fetch = fetch_audio(url, projects or _default_projects(), refresh=refresh)
+    source = load_source(fetch.project_dir)
+    if fetch.reused:
+        console.print(f"[green]Using cached audio[/green] {source.title}")
+    else:
+        console.print(f"[green]Fetched[/green] {source.title}")
+    console.print(f"Project: {fetch.project_dir}")
 
 
 @app.command("subtitles")
 def subtitles_cmd(
     target: str = typer.Argument(..., help="YouTube URL or existing project directory"),
     projects: Optional[Path] = typer.Option(None, "--projects", help="Projects root directory"),
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="Re-download subtitles even when cached VTT files already parse",
+    ),
 ) -> None:
     """Download subtitles for a project or URL."""
     require_dependencies(console)
@@ -166,9 +191,18 @@ def subtitles_cmd(
             save_source(project_dir, source)
 
     source = load_source(project_dir)
-    download_subtitles(source.url, project_dir)
+    result = download_subtitles(source.url, project_dir, refresh=refresh)
     cues = load_project_cues(project_dir)
-    console.print(f"Wrote subtitles under {project_dir / 'subtitles'} ({len(cues)} cues after parse/dedup).")
+    if result.reused:
+        console.print(
+            f"Using cached subtitles under {project_dir / 'subtitles'} "
+            f"({len(cues)} cues after parse/dedup)."
+        )
+    else:
+        console.print(
+            f"Wrote subtitles under {project_dir / 'subtitles'} "
+            f"({len(cues)} cues after parse/dedup)."
+        )
 
 
 @app.command("mine")

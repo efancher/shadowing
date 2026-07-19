@@ -105,6 +105,14 @@ By default, each saved sentence also gets a hiragana `reading` generated from
 the Japanese text (useful when kanji is unfamiliar). Pass `--no-kana` to skip
 that. Readings are dictionary-based hints from UniDic, not verified furigana.
 
+Repeated runs reuse on-disk source audio and subtitle files when they already
+look valid, so you avoid another YouTube download (and intermittent 403s). Pass
+`--refresh` to force a fresh download:
+
+```bash
+shadowmine create "$URL" -y --refresh
+```
+
 The command prints the project and package paths. Transfer the resulting
 `.shadowing.zip` to your phone or tablet and choose **Import package** in the
 web app's Library or Settings page.
@@ -316,6 +324,14 @@ prefer bare Japanese text:
 shadowmine create "$URL" -y --no-kana
 ```
 
+Audio and subtitle downloads are cached on disk. A second `create` for the same
+video reuses them and only re-runs local mining/export work. Force fresh
+downloads with `--refresh`:
+
+```bash
+shadowmine create "$URL" -y --refresh
+```
+
 If you quit without saving any sentences and the project has no previously
 saved sentences, the command stops without creating an empty package.
 
@@ -363,7 +379,9 @@ shadowmine fetch "https://www.youtube.com/watch?v=VIDEO_ID"
 shadowmine fetch "$URL" --projects "/path/to/projects"
 ```
 
-Re-running `fetch` overwrites the downloaded source audio for that video.
+If `source.json` and a usable `source_audio.*` already exist for that video ID,
+`fetch` reuses them and skips the YouTube download. Pass `--refresh` to force a
+new download and overwrite the cached audio.
 
 ### `shadowmine subtitles <url|project>`
 
@@ -386,6 +404,12 @@ shadowmine subtitles "$URL"
 URL mode creates source metadata and subtitle files but does not download
 source audio. Run `fetch` before `mine` or `clip`, because those commands need
 `source_audio.m4a`.
+
+When usable Japanese VTT files are already under `subtitles/`, the command
+reuses them. Pass `--refresh` to download again.
+
+If usable `.vtt` files already exist under `subtitles/` and parse into Japanese
+cues, the download is skipped. Pass `--refresh` to fetch them again.
 
 Automatic captions are marked as auto-generated and are never treated as
 verified text. Review and correct them before relying on them.
