@@ -4,7 +4,7 @@ export const MAX_CLIP_DURATION_MS = 20_000;
 export const MIN_CLIP_DURATION_MS = 200;
 export const ANALYSIS_SAMPLE_RATE = 16_000;
 export const FINE_ADJUST_STEPS = [0.01, 0.05, 0.1, 0.5] as const;
-export const PLAYBACK_SPEEDS = [1, 0.9, 0.8, 0.7, 0.6] as const;
+export const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25] as const;
 export const EXPORT_FORMAT = "japanese-pronunciation-lab" as const;
 
 export function nowIso() {

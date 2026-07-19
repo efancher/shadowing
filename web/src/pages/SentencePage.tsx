@@ -40,11 +40,37 @@ function AudioPlayer({
   const { url, error } = useAssetUrl(assetId);
   const ref = useRef<HTMLAudioElement>(null);
   useEffect(() => {
-    if (ref.current) ref.current.playbackRate = playbackRate;
+    if (!ref.current) return;
+    ref.current.playbackRate = playbackRate;
+    // Keep the pitch natural when slowing playback down for practice.
+    ref.current.preservesPitch = true;
   }, [playbackRate, url]);
   if (error) return <span className="notice error">{error}</span>;
   if (!url) return <span className="muted">Loading {label.toLowerCase()}…</span>;
   return <audio ref={ref} className="audio-player" controls preload="metadata" src={url} aria-label={label} />;
+}
+
+function SpeedControl({
+  speed,
+  onChange,
+  label = "Speed"
+}: {
+  speed: number;
+  onChange: (value: number) => void;
+  label?: string;
+}) {
+  return (
+    <label>
+      {label}
+      <select value={speed} onChange={(event) => onChange(Number(event.target.value))}>
+        {PLAYBACK_SPEEDS.map((value) => (
+          <option key={value} value={value}>
+            {value === 1 ? "1× (normal)" : `${value}×`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 export function SentencePage() {
@@ -241,15 +267,12 @@ export function SentencePage() {
           <button className="secondary" type="button" disabled={busy} onClick={() => void runCalibration()}>
             Calibrate mic
           </button>
-          <label>
-            Speed
-            <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-              {PLAYBACK_SPEEDS.map((value) => (
-                <option key={value} value={value}>{Math.round(value * 100)}%</option>
-              ))}
-            </select>
-          </label>
+          <SpeedControl speed={speed} onChange={setSpeed} label="Playback speed" />
         </div>
+        <p className="muted">
+          Speed applies to reference and comparison playback everywhere on this page. Analysis
+          always uses the original-speed audio.
+        </p>
         {calibration && (
           <ul className="muted">
             {calibration.map((item) => <li key={item}>{item}</li>)}
@@ -353,6 +376,7 @@ export function SentencePage() {
             <p className="eyebrow">Step 3</p>
             <h2>Listen and compare</h2>
           </div>
+          <SpeedControl speed={speed} onChange={setSpeed} />
         </div>
         {attempts.length > 1 && (
           <label>
