@@ -65,6 +65,44 @@ export function SettingsPage() {
     }
   }
 
+  async function importPackage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const summary = await transferService.inspectShadowingPackage(file);
+      let mode: "merge" | "replace" | "keep-both" = "merge";
+      if (summary.hasConflict) {
+        const keepBoth = window.confirm(
+          "This package conflicts with existing IDs. Choose OK to keep both (new IDs), or Cancel to replace the whole library."
+        );
+        mode = keepBoth ? "keep-both" : "replace";
+        if (mode === "replace" && !window.confirm("Replace all local data with this package?")) {
+          event.target.value = "";
+          return;
+        }
+      } else {
+        const replace = window.confirm(
+          "Choose OK to replace this library with the package. Choose Cancel to merge."
+        );
+        mode = replace ? "replace" : "merge";
+        if (replace && !window.confirm("This will delete existing local data before importing.")) {
+          event.target.value = "";
+          return;
+        }
+      }
+      const result = await transferService.importShadowingPackage(file, mode);
+      setNotice(
+        `Imported “${result.sourceTitle}” with ${result.sentenceCount} sentences and ${result.audioCount} clips.`
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not import package.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
   async function importMetadata(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -167,6 +205,24 @@ export function SettingsPage() {
         <button className="secondary" type="button" onClick={() => void requestPersist()}>
           Request persistent storage
         </button>
+      </section>
+
+      <section className="card settings-card">
+        <h2>Import shadowing package</h2>
+        <p>
+          Import a <code>.shadowing.zip</code> built with the desktop <code>shadowmine</code> CLI.
+          This is the primary way to add practice material.
+        </p>
+        <div className="button-row">
+          <label className="primary file-button">
+            Import .shadowing.zip
+            <input
+              type="file"
+              accept=".zip,.shadowing.zip,application/zip"
+              onChange={(event) => void importPackage(event)}
+            />
+          </label>
+        </div>
       </section>
 
       <section className="card settings-card">

@@ -9,16 +9,82 @@ import type {
   ReferenceAudio,
   Source,
   SourceMedia,
+  SourceType,
   SubtitleCue,
   SubtitleTrack,
   TimingGuide,
   PracticeChunk,
-  PracticeEvent
+  PracticeEvent,
+  TranscriptStatus
 } from "../types";
 import { db, type ShadowingDatabase } from "../db/schema";
-import { EXPORT_FORMAT, nowIso, validateTimestamps } from "./shared";
+import { EXPORT_FORMAT, newId, nowIso, validateTimestamps } from "./shared";
 
 type ImportMode = "merge" | "replace";
+export type PackageImportMode = "merge" | "replace" | "keep-both";
+
+const PACKAGE_FORMAT = "japanese-shadowing-package" as const;
+
+export interface PackageImportSummary {
+  title: string;
+  channel?: string;
+  sentenceCount: number;
+  audioCount: number;
+  /** True when IDs collide with a different source (merge blocked). */
+  hasConflict: boolean;
+  /** True when the same source id already exists and can be refreshed via merge. */
+  canRefresh: boolean;
+  sourceId: string;
+}
+
+export interface PackageImportResult {
+  sourceId: string;
+  sourceTitle: string;
+  sentenceCount: number;
+  audioCount: number;
+}
+
+interface PackageManifest {
+  format: typeof PACKAGE_FORMAT;
+  version: 1;
+  createdAt: string;
+  generator: { name: string; version: string };
+}
+
+interface PackageSource {
+  id: string;
+  type: SourceType;
+  url?: string;
+  videoId?: string;
+  title: string;
+  channel?: string;
+  durationMs?: number;
+}
+
+interface PackageSentence {
+  id: string;
+  japanese: string;
+  reading?: string;
+  english?: string;
+  startMs: number;
+  endMs: number;
+  speaker?: string;
+  tags: string[];
+  notes?: string;
+  transcriptStatus: "unverified" | "auto-caption" | "manually-corrected" | "verified";
+  audio: {
+    path: string;
+    mimeType: string;
+    durationMs: number;
+  };
+}
+
+interface ParsedPackage {
+  manifest: PackageManifest;
+  source: PackageSource;
+  sentences: PackageSentence[];
+  files: Record<string, Uint8Array>;
+}
 
 function withoutReferenceLink(sentence: MinedSentence): Omit<MinedSentence, "referenceAudioId"> {
   const copy = { ...sentence };
@@ -35,8 +101,19 @@ function extensionForMime(mimeType: string) {
   return "bin";
 }
 
+type ZipInput = Blob | ArrayBuffer | Uint8Array;
+
+async function toUint8Array(input: ZipInput): Promise<Uint8Array> {
+  if (input instanceof Uint8Array) return input;
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (typeof input.arrayBuffer === "function") {
+    return new Uint8Array(await input.arrayBuffer());
+  }
+  return new Uint8Array(await new Response(input).arrayBuffer());
+}
+
 async function blobToUint8Array(blob: Blob) {
-  return new Uint8Array(await blob.arrayBuffer());
+  return toUint8Array(blob);
 }
 
 export class TransferService {
@@ -307,6 +384,196 @@ export class TransferService {
       }
     );
   }
+
+  async inspectShadowingPackage(file: ZipInput): Promise<PackageImportSummary> {
+    const files = unzipSync(await toUint8Array(file));
+    const parsed = parseShadowingPackage(files);
+    const existingSource = await this.database.sources.get(parsed.source.id);
+    const existingSentences = await this.database.sentences.toArray();
+    const existingSentenceIds = new Set(existingSentences.map((sentence) => sentence.id));
+    const sentenceOwner = new Map(existingSentences.map((sentence) => [sentence.id, sentence.sourceId]));
+    const colliding = parsed.sentences.filter((sentence) => existingSentenceIds.has(sentence.id));
+    const canRefresh =
+      Boolean(existingSource) &&
+      colliding.every((sentence) => sentenceOwner.get(sentence.id) === parsed.source.id);
+    const hasConflict =
+      (!existingSource && colliding.length > 0) ||
+      (Boolean(existingSource) && !canRefresh);
+    return {
+      title: parsed.source.title,
+      channel: parsed.source.channel,
+      sentenceCount: parsed.sentences.length,
+      audioCount: parsed.sentences.length,
+      hasConflict,
+      canRefresh,
+      sourceId: parsed.source.id
+    };
+  }
+
+  async importShadowingPackage(file: ZipInput, mode: PackageImportMode): Promise<PackageImportResult> {
+    const files = unzipSync(await toUint8Array(file));
+    const parsed = parseShadowingPackage(files);
+    const timestamp = nowIso();
+    let sourceId = parsed.source.id;
+    const sentenceIdMap = new Map<string, string>();
+
+    const existingSource = await this.database.sources.get(parsed.source.id);
+    const existingSentences = await this.database.sentences.toArray();
+    const existingSentenceIds = new Set(existingSentences.map((sentence) => sentence.id));
+    const sentenceOwner = new Map(existingSentences.map((sentence) => [sentence.id, sentence.sourceId]));
+    const collidingIds = parsed.sentences.filter((sentence) => existingSentenceIds.has(sentence.id));
+    const sameSourceRefresh =
+      mode === "merge" &&
+      Boolean(existingSource) &&
+      collidingIds.every((sentence) => sentenceOwner.get(sentence.id) === parsed.source.id);
+
+    if (mode === "keep-both") {
+      sourceId = newId();
+      for (const sentence of parsed.sentences) {
+        sentenceIdMap.set(sentence.id, newId());
+      }
+    } else if (mode === "merge") {
+      if (existingSource && !sameSourceRefresh) {
+        throw new Error("Package contains IDs already in this library. Use Keep both or Replace.");
+      }
+      if (!existingSource && collidingIds.length > 0) {
+        throw new Error("Package contains IDs already in this library. Use Keep both or Replace.");
+      }
+      for (const sentence of parsed.sentences) {
+        sentenceIdMap.set(sentence.id, sentence.id);
+      }
+    } else {
+      for (const sentence of parsed.sentences) {
+        sentenceIdMap.set(sentence.id, sentence.id);
+      }
+    }
+
+    const source: Source = {
+      id: sourceId,
+      type: parsed.source.type,
+      title: parsed.source.title,
+      url: parsed.source.url,
+      externalId: parsed.source.videoId,
+      channelOrCreator: parsed.source.channel,
+      notes: `Imported from ${PACKAGE_FORMAT} v1 (${parsed.manifest.generator.name} ${parsed.manifest.generator.version})`,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    const assets: AudioAsset[] = [];
+    const references: ReferenceAudio[] = [];
+    const sentences: MinedSentence[] = [];
+
+    for (const packageSentence of parsed.sentences) {
+      const sentenceId = sentenceIdMap.get(packageSentence.id) ?? packageSentence.id;
+      const assetId = newId();
+      const referenceId = newId();
+      const audioBytes = files[assertSafeZipPath(packageSentence.audio.path)];
+      assets.push({
+        id: assetId,
+        kind: "reference",
+        blob: new Blob([audioBytes as BlobPart], { type: packageSentence.audio.mimeType }),
+        mimeType: packageSentence.audio.mimeType,
+        byteLength: audioBytes.byteLength,
+        durationMs: packageSentence.audio.durationMs,
+        originalFileName: packageSentence.audio.path.split("/").at(-1),
+        createdAt: timestamp
+      });
+      references.push({
+        id: referenceId,
+        sentenceId,
+        audioAssetId: assetId,
+        sourceType: "local-media-clip",
+        originalStartSeconds: packageSentence.startMs / 1000,
+        originalEndSeconds: packageSentence.endMs / 1000,
+        createdAt: timestamp
+      });
+      sentences.push({
+        id: sentenceId,
+        sourceId,
+        japanese: packageSentence.japanese.trim(),
+        reading: packageSentence.reading,
+        english: packageSentence.english,
+        startSeconds: packageSentence.startMs / 1000,
+        endSeconds: packageSentence.endMs / 1000,
+        speakerLabel: packageSentence.speaker,
+        tags: packageSentence.tags ?? [],
+        notes: packageSentence.notes,
+        transcriptStatus: mapTranscriptStatus(packageSentence.transcriptStatus),
+        referenceAudioId: referenceId,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+    }
+
+    await this.database.transaction(
+      "rw",
+      [
+        this.database.sources,
+        this.database.sentences,
+        this.database.audioAssets,
+        this.database.referenceAudio,
+        this.database.attempts,
+        this.database.derivedAnalyses,
+        this.database.sourceMedia,
+        this.database.subtitleTracks,
+        this.database.subtitleCues,
+        this.database.timingGuides,
+        this.database.practiceChunks,
+        this.database.practiceEvents
+      ],
+      async () => {
+        if (mode === "replace") {
+          await Promise.all([
+            this.database.sources.clear(),
+            this.database.sentences.clear(),
+            this.database.audioAssets.clear(),
+            this.database.referenceAudio.clear(),
+            this.database.attempts.clear(),
+            this.database.derivedAnalyses.clear(),
+            this.database.sourceMedia.clear(),
+            this.database.subtitleTracks.clear(),
+            this.database.subtitleCues.clear(),
+            this.database.timingGuides.clear(),
+            this.database.practiceChunks.clear(),
+            this.database.practiceEvents.clear()
+          ]);
+        } else if (sameSourceRefresh) {
+          const oldSentences = await this.database.sentences.where("sourceId").equals(parsed.source.id).toArray();
+          const oldSentenceIds = oldSentences.map((sentence) => sentence.id);
+          if (oldSentenceIds.length > 0) {
+            const oldRefs = await this.database.referenceAudio.where("sentenceId").anyOf(oldSentenceIds).toArray();
+            const oldAssetIds = oldRefs.map((reference) => reference.audioAssetId);
+            await this.database.sentences.bulkDelete(oldSentenceIds);
+            if (oldRefs.length > 0) {
+              await this.database.referenceAudio.bulkDelete(oldRefs.map((reference) => reference.id));
+            }
+            if (oldAssetIds.length > 0) {
+              await this.database.audioAssets.bulkDelete(oldAssetIds);
+            }
+            const kept = new Set(sentences.map((sentence) => sentence.id));
+            const staleAttemptIds = (await this.database.attempts.where("sentenceId").anyOf(oldSentenceIds).toArray())
+              .filter((attempt) => !kept.has(attempt.sentenceId))
+              .map((attempt) => attempt.id);
+            if (staleAttemptIds.length > 0) {
+              await this.database.attempts.bulkDelete(staleAttemptIds);
+            }
+          }
+        }
+        await this.database.sources.put(source);
+        await this.database.sentences.bulkPut(sentences);
+        await this.database.audioAssets.bulkPut(assets);
+        await this.database.referenceAudio.bulkPut(references);
+      }
+    );
+
+    return {
+      sourceId,
+      sourceTitle: source.title,
+      sentenceCount: sentences.length,
+      audioCount: assets.length
+    };
+  }
 }
 
 export function validateMetadataExport(value: unknown): MetadataExport {
@@ -339,4 +606,56 @@ export function isQuotaError(error: unknown) {
     error instanceof Dexie.QuotaExceededError ||
     (error instanceof DOMException && error.name === "QuotaExceededError")
   );
+}
+
+function assertSafeZipPath(path: string) {
+  const normalized = path.replace(/\\/g, "/");
+  if (!normalized || normalized.startsWith("/") || normalized.split("/").includes("..")) {
+    throw new Error(`Unsafe path in package: ${path}`);
+  }
+  return normalized;
+}
+
+function mapTranscriptStatus(status: PackageSentence["transcriptStatus"]): TranscriptStatus {
+  if (status === "auto-caption") return "machine-generated";
+  return status;
+}
+
+function parseShadowingPackage(files: Record<string, Uint8Array>): ParsedPackage {
+  for (const name of Object.keys(files)) assertSafeZipPath(name);
+  const manifestRaw = files["manifest.json"];
+  const sourceRaw = files["source.json"];
+  const sentencesRaw = files["sentences.json"];
+  if (!manifestRaw || !sourceRaw || !sentencesRaw) {
+    throw new Error("Package must include manifest.json, source.json, and sentences.json.");
+  }
+  const manifest = JSON.parse(strFromU8(manifestRaw)) as PackageManifest;
+  if (manifest.format !== PACKAGE_FORMAT || manifest.version !== 1) {
+    throw new Error("This is not a supported japanese-shadowing-package v1 file.");
+  }
+  const source = JSON.parse(strFromU8(sourceRaw)) as PackageSource;
+  const sentences = JSON.parse(strFromU8(sentencesRaw)) as PackageSentence[];
+  if (!source?.id || !source.title) throw new Error("Package source.json is invalid.");
+  if (!Array.isArray(sentences) || sentences.length === 0) {
+    throw new Error("Package sentences.json must contain at least one sentence.");
+  }
+  for (const sentence of sentences) {
+    if (!sentence?.id || !sentence.japanese?.trim()) {
+      throw new Error("Package has an invalid sentence.");
+    }
+    if (sentence.endMs <= sentence.startMs) {
+      throw new Error(`Sentence ${sentence.id} has invalid timestamps.`);
+    }
+    const audioPath = assertSafeZipPath(sentence.audio?.path ?? "");
+    if (!audioPath.startsWith("audio/")) {
+      throw new Error(`Audio path must be under audio/: ${audioPath}`);
+    }
+    if (!files[audioPath]) {
+      throw new Error(`Package is missing audio file ${audioPath}.`);
+    }
+    if (!sentence.audio.durationMs || sentence.audio.durationMs < 1) {
+      throw new Error(`Sentence ${sentence.id} has invalid audio duration.`);
+    }
+  }
+  return { manifest, source, sentences, files };
 }

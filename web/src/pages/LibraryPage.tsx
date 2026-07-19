@@ -1,19 +1,22 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Link, useNavigate } from "react-router-dom";
 import { db } from "../db/schema";
 import { ErrorNotice, EmptyState } from "../components/Layout";
-import { SentenceService } from "../services";
+import { TransferService, type PackageImportMode, type PackageImportSummary } from "../services";
 import type { SourceType } from "../types";
 
-const sentenceService = new SentenceService();
+const transferService = new TransferService();
 
 type SortMode = "updated" | "practiced" | "title";
 
 export function LibraryPage() {
   const navigate = useNavigate();
-  const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File>();
+  const [summary, setSummary] = useState<PackageImportSummary>();
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<SourceType | "all">("all");
   const [onlyWithReference, setOnlyWithReference] = useState(false);
@@ -49,9 +52,6 @@ export function LibraryPage() {
     let rows = library.filter((row) => {
       if (typeFilter !== "all" && row.source.type !== typeFilter) return false;
       if (onlyWithReference && row.referenceCount === 0) return false;
-      if (needsReview && row.attemptCount > 0 && row.referenceCount > 0) {
-        // needs review = has material but no recent practice in 7 days or never practiced
-      }
       if (needsReview) {
         const stale =
           !row.lastPracticed ||
@@ -75,20 +75,42 @@ export function LibraryPage() {
     return rows;
   }, [library, query, typeFilter, onlyWithReference, needsReview, sortMode]);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function handlePackagePick(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
     setError(undefined);
-    const data = new FormData(event.currentTarget);
+    setNotice(undefined);
     try {
-      const source = await sentenceService.createSource({
-        title: String(data.get("title")),
-        type: String(data.get("type")) as SourceType,
-        url: String(data.get("url")),
-        channelOrCreator: String(data.get("creator"))
-      });
-      navigate(`/sources/${source.id}`);
+      const next = await transferService.inspectShadowingPackage(file);
+      setPendingFile(file);
+      setSummary(next);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save source.");
+      setPendingFile(undefined);
+      setSummary(undefined);
+      setError(reason instanceof Error ? reason.message : "Could not read package.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmImport(mode: PackageImportMode) {
+    if (!pendingFile) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await transferService.importShadowingPackage(pendingFile, mode);
+      setNotice(
+        `Imported “${result.sourceTitle}” with ${result.sentenceCount} sentences and ${result.audioCount} clips.`
+      );
+      setPendingFile(undefined);
+      setSummary(undefined);
+      navigate(`/sources/${result.sourceId}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not import package.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -99,10 +121,63 @@ export function LibraryPage() {
           <p className="eyebrow">Your study material</p>
           <h1>Sentence library</h1>
         </div>
-        <button className="primary compact" onClick={() => setShowForm((value) => !value)}>
-          {showForm ? "Cancel" : "New source"}
-        </button>
+        <label className={`primary compact file-button${busy ? " disabled" : ""}`}>
+          Import package
+          <input
+            type="file"
+            accept=".zip,.shadowing.zip,application/zip"
+            disabled={busy}
+            onChange={(event) => void handlePackagePick(event)}
+          />
+        </label>
       </div>
+
+      <section className="card form-card">
+        <h2>Desktop CLI → practice</h2>
+        <p className="muted">
+          Mine and clip on your computer with <code>shadowmine</code>, then import a{" "}
+          <code>.shadowing.zip</code> here to listen, record, and compare on this device.
+        </p>
+        <ErrorNotice message={error} />
+        {notice && <p className="notice" role="status">{notice}</p>}
+        {summary && (
+          <div className="import-summary">
+            <p>
+              <strong>{summary.title}</strong>
+              {summary.channel ? ` · ${summary.channel}` : ""}
+            </p>
+            <p className="muted">
+              {summary.sentenceCount} sentences · {summary.audioCount} audio clips
+              {summary.hasConflict ? " · conflicts with existing IDs" : ""}
+            </p>
+            <div className="button-row">
+              <button
+                className="primary"
+                type="button"
+                disabled={busy || (summary.hasConflict && !summary.canRefresh)}
+                onClick={() => void confirmImport("merge")}
+              >
+                {summary.canRefresh ? "Refresh source" : "Merge"}
+              </button>
+              <button className="secondary" type="button" disabled={busy} onClick={() => void confirmImport("keep-both")}>
+                Keep both
+              </button>
+              <button className="danger-text" type="button" disabled={busy} onClick={() => void confirmImport("replace")}>
+                Replace library
+              </button>
+              <button type="button" disabled={busy} onClick={() => { setPendingFile(undefined); setSummary(undefined); }}>
+                Cancel
+              </button>
+            </div>
+            {summary.hasConflict && !summary.canRefresh && (
+              <p className="muted">Merge is blocked because IDs already exist. Use Keep both or Replace.</p>
+            )}
+            {summary.canRefresh && (
+              <p className="muted">This source is already in your library. Refresh updates clips and keeps matching attempts.</p>
+            )}
+          </div>
+        )}
+      </section>
 
       <section className="card form-card filters-card">
         <div className="form-grid">
@@ -145,44 +220,11 @@ export function LibraryPage() {
         </div>
       </section>
 
-      {showForm && (
-        <form className="card form-card" onSubmit={handleSubmit}>
-          <h2>Add a source</h2>
-          <label>
-            Title
-            <input name="title" required placeholder="Video, episode, podcast…" />
-          </label>
-          <div className="form-grid">
-            <label>
-              Type
-              <select name="type" defaultValue="youtube">
-                <option value="youtube">YouTube</option>
-                <option value="uploaded-video">Uploaded video</option>
-                <option value="uploaded-audio">Uploaded audio</option>
-                <option value="podcast">Podcast</option>
-                <option value="manual">Manual study set</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-            <label>
-              Creator
-              <input name="creator" placeholder="Channel or speaker" />
-            </label>
-          </div>
-          <label>
-            URL <span className="optional">optional</span>
-            <input name="url" type="url" inputMode="url" placeholder="https://…" />
-          </label>
-          <ErrorNotice message={error} />
-          <button className="primary" type="submit">Create source</button>
-        </form>
-      )}
-
       {!library ? (
         <p className="muted">Loading library…</p>
       ) : filtered.length === 0 ? (
         <EmptyState title="No matching sources">
-          Adjust filters or save your first source to begin mining sentences.
+          Import a <code>.shadowing.zip</code> package to start practicing.
         </EmptyState>
       ) : (
         <div className="card-grid">

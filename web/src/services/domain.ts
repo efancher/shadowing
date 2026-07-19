@@ -15,9 +15,8 @@ import type {
 } from "../types";
 import { db, type ShadowingDatabase } from "../db/schema";
 import { AssetService } from "./assets";
-import { cleanOptional, newId, nowIso, validateTimestamps } from "./shared";
+import { cleanOptional, extractYouTubeId, newId, nowIso, validateTimestamps, youtubeWatchUrl } from "./shared";
 import { detectSubtitleFormat, parseSrt, parseWebVtt, type ParsedCue } from "./subtitles";
-import { extractYouTubeId, youtubeWatchUrl } from "./youtube";
 import { seedMoraUnits } from "../analysis/japanese";
 
 export interface CreateSourceInput {

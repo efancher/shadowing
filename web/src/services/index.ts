@@ -27,15 +27,20 @@ export { AnalysisService } from "./analysis";
 export {
   TransferService,
   isQuotaError,
-  validateMetadataExport
+  validateMetadataExport,
+  type PackageImportMode,
+  type PackageImportResult,
+  type PackageImportSummary
 } from "./transfer";
 export {
   FINE_ADJUST_STEPS,
   MAX_CLIP_DURATION_MS,
   MAX_SOURCE_MEDIA_BYTES,
   PLAYBACK_SPEEDS,
+  extractYouTubeId,
   formatClock,
-  validateTimestamps
+  validateTimestamps,
+  youtubeWatchUrl
 } from "./shared";
 export {
   detectSubtitleFormat,
@@ -43,4 +48,3 @@ export {
   parseSrt,
   parseWebVtt
 } from "./subtitles";
-export { extractYouTubeId, loadYouTubeApi, youtubeWatchUrl } from "./youtube";

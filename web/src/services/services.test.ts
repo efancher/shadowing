@@ -194,3 +194,55 @@ describe("audio analysis helpers", () => {
     expect(detectOnsetSeconds(canonical.samples, canonical.sampleRate)).toBeGreaterThan(0.01);
   });
 });
+
+describe("shadowing package import", () => {
+  it("imports japanese-shadowing-package v1 into dexie stores", async () => {
+    const { zipSync, strToU8 } = await import("fflate");
+    const database = createDatabase();
+    const transfer = new TransferService(database);
+    const audio = new Uint8Array([0, 0, 0, 0, 1, 2, 3, 4]);
+    const zipped = zipSync({
+      "manifest.json": strToU8(
+        JSON.stringify({
+          format: "japanese-shadowing-package",
+          version: 1,
+          createdAt: "2026-07-18T00:00:00Z",
+          generator: { name: "shadowmine", version: "0.1.0" }
+        })
+      ),
+      "source.json": strToU8(
+        JSON.stringify({
+          id: "source-pkg-1",
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          videoId: "dQw4w9WgXcQ",
+          title: "Package Source",
+          channel: "Channel"
+        })
+      ),
+      "sentences.json": strToU8(
+        JSON.stringify([
+          {
+            id: "sentence-001",
+            japanese: "こんにちは。",
+            english: "Hello.",
+            startMs: 1000,
+            endMs: 2000,
+            tags: ["greeting"],
+            transcriptStatus: "manually-corrected",
+            audio: { path: "audio/sentence-001.wav", mimeType: "audio/wav", durationMs: 500 }
+          }
+        ])
+      ),
+      "audio/sentence-001.wav": audio
+    });
+    const summary = await transfer.inspectShadowingPackage(zipped);
+    expect(summary.sentenceCount).toBe(1);
+    expect(summary.hasConflict).toBe(false);
+    const result = await transfer.importShadowingPackage(zipped, "merge");
+    expect(result.sourceId).toBe("source-pkg-1");
+    expect(await database.sentences.count()).toBe(1);
+    expect(await database.referenceAudio.count()).toBe(1);
+    expect(await database.audioAssets.count()).toBe(1);
+  });
+});

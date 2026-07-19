@@ -1,0 +1,9 @@
+{
+  "id": "source-example-1",
+  "type": "youtube",
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "videoId": "dQw4w9WgXcQ",
+  "title": "Example Conversation",
+  "channel": "Example Channel",
+  "durationMs": 600000
+}

@@ -39,6 +39,29 @@ export function formatClock(seconds: number) {
   return `${minutes}:${remainder}`;
 }
 
+export function extractYouTubeId(input: string): string | undefined {
+  const trimmed = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname.includes("youtu.be")) {
+      const id = url.pathname.split("/").filter(Boolean)[0];
+      return id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : undefined;
+    }
+    if (url.hostname.includes("youtube.com")) {
+      const id = url.searchParams.get("v") ?? url.pathname.split("/").filter(Boolean).at(-1);
+      return id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+export function youtubeWatchUrl(videoId: string) {
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
+
 export async function getMediaDurationMs(blob: Blob): Promise<number> {
   const url = URL.createObjectURL(blob);
   try {

@@ -1,6 +1,40 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
 node_modules
+web/dist
+web/node_modules
 dist
-.DS_Store
+dist-ssr
+.vite
 *.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python
+cli/.venv/
+cli/**/__pycache__/
+cli/**/*.egg-info/
+cli/.pytest_cache/
+*.pyc
+.Python
+projects/
+
+# Test / coverage
 coverage
-playwright-report
+*.lcov
