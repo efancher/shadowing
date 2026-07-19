@@ -8,8 +8,41 @@ from rich.table import Table
 
 from shadowmine.clip import add_clip
 from shadowmine.models import Cue
-from shadowmine.project import load_sentences
+from shadowmine.project import load_sentences, save_sentences
+from shadowmine.readings import generate_reading, reading_engine_available
 from shadowmine.subtitles import load_parallel_text, load_project_cues
+
+
+def _warn_if_no_reading_engine(out: Console, kana: bool) -> None:
+    if kana and not reading_engine_available():
+        out.print(
+            "[yellow]Kana reading engine unavailable; sentences will be saved "
+            "without furigana. Run `shadowmine doctor` for setup help.[/yellow]"
+        )
+
+
+def backfill_readings(project_dir: Path, console: Console | None = None) -> int:
+    """Generate kana readings for saved sentences that are missing them.
+
+    Sentences mined before kana support (or with the engine unavailable) have
+    no reading; this fills them in without re-clipping audio.
+    """
+    out = console or Console()
+    if not reading_engine_available():
+        return 0
+    sentences = load_sentences(project_dir)
+    updated = 0
+    for sentence in sentences:
+        if sentence.reading:
+            continue
+        reading = generate_reading(sentence.japanese)
+        if reading:
+            sentence.reading = reading
+            updated += 1
+    if updated:
+        save_sentences(project_dir, sentences)
+        out.print(f"[green]Added kana readings to {updated} existing sentence(s).[/green]")
+    return updated
 
 
 def _format_ms(ms: int) -> str:
@@ -25,12 +58,17 @@ def _transcript_status(cue: Cue, edited: bool = False) -> str:
     return "auto-caption" if cue.isAuto else "unverified"
 
 
-def run_mine_loop(project_dir: Path, console: Console | None = None) -> int:
+def run_mine_loop(
+    project_dir: Path, console: Console | None = None, kana: bool = True
+) -> int:
     out = console or Console()
     cues = load_project_cues(project_dir)
     if not cues:
         out.print("[yellow]No subtitle cues found. Run `shadowmine subtitles` first.[/yellow]")
         return 1
+    _warn_if_no_reading_engine(out, kana)
+    if kana:
+        backfill_readings(project_dir, out)
 
     auto_count = sum(1 for cue in cues if cue.isAuto)
     if auto_count:
@@ -89,9 +127,12 @@ def run_mine_loop(project_dir: Path, console: Console | None = None) -> int:
             end_seconds=cue.endMs / 1000,
             japanese=japanese,
             english=english or None,
+            generate_kana=kana,
             transcript_status=_transcript_status(cue, edited=action == "edit"),
         )
         out.print(f"[green]Saved[/green] {sentence.id} → {sentence.clipPath}")
+        if sentence.reading:
+            out.print(f"  [dim]kana:[/dim] {sentence.reading}")
         saved += 1
         index += 1
 
@@ -99,13 +140,18 @@ def run_mine_loop(project_dir: Path, console: Console | None = None) -> int:
     return 0
 
 
-def mine_all_cues(project_dir: Path, console: Console | None = None) -> int:
+def mine_all_cues(
+    project_dir: Path, console: Console | None = None, kana: bool = True
+) -> int:
     """Save every Japanese cue noninteractively, including aligned English."""
     out = console or Console()
     cues = load_project_cues(project_dir)
     if not cues:
         out.print("[yellow]No subtitle cues found. Run `shadowmine subtitles` first.[/yellow]")
         return 0
+    _warn_if_no_reading_engine(out, kana)
+    if kana:
+        backfill_readings(project_dir, out)
 
     english_by_index = load_parallel_text(project_dir, cues)
     existing_boundaries = {
@@ -132,6 +178,7 @@ def mine_all_cues(project_dir: Path, console: Console | None = None) -> int:
             end_seconds=cue.endMs / 1000,
             japanese=cue.text,
             english=english_by_index.get(cue.index),
+            generate_kana=kana,
             transcript_status=_transcript_status(cue),
         )
         saved += 1

@@ -14,11 +14,14 @@ class DependencyReport:
     ffmpeg_ok: bool
     ffprobe_ok: bool
     ytdlp_ok: bool
+    reading_ok: bool
     python_version: str
     messages: list[str]
 
     @property
     def ok(self) -> bool:
+        # The reading engine is optional; a missing kana engine only means clips
+        # are saved without furigana, so it does not fail the required checks.
         return self.python_ok and self.ffmpeg_ok and self.ffprobe_ok and self.ytdlp_ok
 
 
@@ -30,7 +33,7 @@ def _install_hint(tool: str) -> str:
         if system == "windows":
             return "Install with winget: winget install Gyan.FFmpeg (or scoop install ffmpeg)"
         return "Install with apt: sudo apt install ffmpeg"
-    if tool == "yt-dlp":
+    if tool in {"yt-dlp", "reading"}:
         return "Install Python deps: pip install -e . (from the cli/ directory)"
     if tool == "python":
         return "Install Python 3.11 or newer from https://www.python.org/downloads/"
@@ -59,11 +62,21 @@ def check_dependencies() -> DependencyReport:
         ytdlp_ok = False
         messages.append(f"yt-dlp Python package missing. {_install_hint('yt-dlp')}")
 
+    from shadowmine.readings import reading_engine_available
+
+    reading_ok = reading_engine_available()
+    if not reading_ok:
+        messages.append(
+            "Kana reading engine unavailable; clips will save without furigana. "
+            f"{_install_hint('reading')}"
+        )
+
     return DependencyReport(
         python_ok=python_ok,
         ffmpeg_ok=ffmpeg_ok,
         ffprobe_ok=ffprobe_ok,
         ytdlp_ok=ytdlp_ok,
+        reading_ok=reading_ok,
         python_version=".".join(str(part) for part in sys.version_info[:3]),
         messages=messages,
     )

@@ -13,6 +13,7 @@ from shadowmine.project import (
     save_sentences,
     source_audio_path,
 )
+from shadowmine.readings import generate_reading
 
 
 def probe_duration_ms(path: Path) -> int:
@@ -103,11 +104,14 @@ def add_clip(
     japanese: str,
     english: str | None = None,
     reading: str | None = None,
+    generate_kana: bool = True,
     tags: list[str] | None = None,
     start_pad_ms: int = DEFAULT_START_PAD_MS,
     end_pad_ms: int = DEFAULT_END_PAD_MS,
     transcript_status: str = "manually-corrected",
 ) -> ProjectSentence:
+    if reading is None and generate_kana:
+        reading = generate_reading(japanese)
     ensure_project_dirs(project_dir)
     source_path = source_audio_path(project_dir)
     media_duration_ms = probe_duration_ms(source_path)

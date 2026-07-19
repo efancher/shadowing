@@ -45,7 +45,9 @@ def test_mine_enter_uses_keep_blank_english_and_save_defaults(
 
     def save_clip(project: Path, **kwargs: object) -> SimpleNamespace:
         saved.append(kwargs)
-        return SimpleNamespace(id="sentence-001", clipPath="clips/sentence-001.m4a")
+        return SimpleNamespace(
+            id="sentence-001", clipPath="clips/sentence-001.m4a", reading=None
+        )
 
     monkeypatch.setattr(mine_module, "add_clip", save_clip)
 
@@ -62,6 +64,7 @@ def test_mine_enter_uses_keep_blank_english_and_save_defaults(
             "end_seconds": 2.5,
             "japanese": "こんにちは。",
             "english": None,
+            "generate_kana": True,
             "transcript_status": "auto-caption",
         }
     ]
@@ -92,6 +95,8 @@ def test_mine_all_uses_english_and_skips_existing_boundaries(
                 subtitleEndMs=2000,
                 startMs=850,
                 endMs=2250,
+                japanese="こんにちは。",
+                reading="こんにちは。",
             )
         ],
     )
@@ -114,6 +119,7 @@ def test_mine_all_uses_english_and_skips_existing_boundaries(
             "end_seconds": 3.0,
             "japanese": "元気ですか。",
             "english": "How are you?",
+            "generate_kana": True,
             "transcript_status": "auto-caption",
         }
     ]

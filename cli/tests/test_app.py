@@ -42,7 +42,7 @@ def test_create_runs_guided_workflow(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         app_module,
         "run_mine_loop",
-        lambda project, console: calls.append("mine") or 0,
+        lambda project, console, **kwargs: calls.append("mine") or 0,
     )
     monkeypatch.setattr(app_module, "load_sentences", lambda project: [object()])
     monkeypatch.setattr(
@@ -94,7 +94,7 @@ def test_create_does_not_export_when_nothing_was_saved(monkeypatch, tmp_path: Pa
         "load_project_cues",
         lambda project: [Cue(index=0, startMs=1000, endMs=2000, text="こんにちは")],
     )
-    monkeypatch.setattr(app_module, "run_mine_loop", lambda project, console: 0)
+    monkeypatch.setattr(app_module, "run_mine_loop", lambda project, console, **kwargs: 0)
     monkeypatch.setattr(app_module, "load_sentences", lambda project: [])
 
     result = runner.invoke(app_module.app, ["create", source.url])
@@ -129,12 +129,12 @@ def test_create_yes_mines_every_cue_without_interactive_loop(
     monkeypatch.setattr(
         app_module,
         "mine_all_cues",
-        lambda project, console: calls.append("mine-all") or 1,
+        lambda project, console, **kwargs: calls.append("mine-all") or 1,
     )
     monkeypatch.setattr(
         app_module,
         "run_mine_loop",
-        lambda project, console: (_ for _ in ()).throw(
+        lambda project, console, **kwargs: (_ for _ in ()).throw(
             AssertionError("interactive miner should not run")
         ),
     )

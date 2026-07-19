@@ -43,10 +43,12 @@ def doctor_cmd() -> None:
     table.add_row("ffmpeg", "ok" if report.ffmpeg_ok else "missing")
     table.add_row("ffprobe", "ok" if report.ffprobe_ok else "missing")
     table.add_row("yt-dlp", "ok" if report.ytdlp_ok else "missing")
+    table.add_row("kana readings (optional)", "ok" if report.reading_ok else "missing")
     console.print(table)
     console.print(f"Python {report.python_version}")
     for message in report.messages:
-        console.print(f"[red]• {message}[/red]")
+        color = "yellow" if message.startswith("Kana reading engine") else "red"
+        console.print(f"[{color}]• {message}[/{color}]")
     raise typer.Exit(code=0 if report.ok else 1)
 
 
@@ -76,6 +78,11 @@ def create_cmd(
         "-y",
         help="Mine every cleaned Japanese cue without prompting",
     ),
+    kana: bool = typer.Option(
+        True,
+        "--kana/--no-kana",
+        help="Generate hiragana readings for kanji (default on)",
+    ),
 ) -> None:
     """Run the normal fetch → subtitles → mine → export workflow."""
     require_dependencies(console)
@@ -99,10 +106,10 @@ def create_cmd(
 
     if yes:
         console.print("\n[bold][3/5][/bold] Mining all subtitle cues…")
-        mine_all_cues(project_dir, console)
+        mine_all_cues(project_dir, console, kana=kana)
     else:
         console.print("\n[bold][3/5][/bold] Review cues and select sentences…")
-        mine_code = run_mine_loop(project_dir, console)
+        mine_code = run_mine_loop(project_dir, console, kana=kana)
         if mine_code != 0:
             raise typer.Exit(code=mine_code)
     sentences = load_sentences(project_dir)
@@ -173,16 +180,21 @@ def mine_cmd(
         "-y",
         help="Mine every cleaned Japanese cue without prompting",
     ),
+    kana: bool = typer.Option(
+        True,
+        "--kana/--no-kana",
+        help="Generate hiragana readings for kanji (default on)",
+    ),
 ) -> None:
     """Mine subtitle cues interactively, or use -y to accept all."""
     require_dependencies(console)
     project_dir = resolve_project_dir(project)
     if yes:
-        mine_all_cues(project_dir, console)
+        mine_all_cues(project_dir, console, kana=kana)
         if not load_sentences(project_dir):
             raise typer.Exit(code=1)
         return
-    code = run_mine_loop(project_dir, console)
+    code = run_mine_loop(project_dir, console, kana=kana)
     raise typer.Exit(code=code)
 
 
@@ -193,7 +205,14 @@ def clip_cmd(
     end: float = typer.Option(..., "--end", help="End seconds"),
     japanese: str = typer.Option(..., "--japanese", help="Japanese sentence text"),
     english: Optional[str] = typer.Option(None, "--english", help="Optional English gloss"),
-    reading: Optional[str] = typer.Option(None, "--reading", help="Optional reading"),
+    reading: Optional[str] = typer.Option(
+        None, "--reading", help="Reading override; auto-generated from kanji when omitted"
+    ),
+    kana: bool = typer.Option(
+        True,
+        "--kana/--no-kana",
+        help="Generate a hiragana reading when --reading is not given (default on)",
+    ),
     tag: Optional[list[str]] = typer.Option(None, "--tag", help="Repeatable tag"),
     start_pad_ms: int = typer.Option(150, "--start-pad-ms"),
     end_pad_ms: int = typer.Option(250, "--end-pad-ms"),
@@ -214,6 +233,7 @@ def clip_cmd(
         japanese=japanese,
         english=english,
         reading=reading,
+        generate_kana=kana,
         tags=tag or [],
         start_pad_ms=start_pad_ms,
         end_pad_ms=end_pad_ms,
