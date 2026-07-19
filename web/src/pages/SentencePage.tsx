@@ -214,7 +214,6 @@ export function SentencePage() {
         {!hideTranscript && (
           <>
             <h1 className="japanese hero-japanese" lang="ja">{sentence.japanese}</h1>
-            {sentence.reading && <p className="reading" lang="ja">{sentence.reading}</p>}
             {sentence.english && <p className="translation">{sentence.english}</p>}
           </>
         )}
@@ -310,6 +309,9 @@ export function SentencePage() {
         </div>
         <p className="muted">Your recording stays on this device. Maximum length: 30 seconds.</p>
         <ErrorNotice message={recordingError} />
+        {!hideTranscript && sentence.reading && (
+          <p className="reading record-reading" lang="ja">{sentence.reading}</p>
+        )}
         {recording ? (
           <button className="record-button stop" onClick={() => void finishRecording()}>
             <span aria-hidden="true">■</span> Stop recording
